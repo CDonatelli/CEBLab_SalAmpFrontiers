@@ -1,0 +1,552 @@
+ 
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(readxl)
+library(plyr)
+library(nlme)
+library(lme4)
+library(car)
+library(cowplot)
+library(gridExtra)
+
+MinMeanSEMMax <- function(x) {
+  v <- c(min(x), median(x) - sd(x), median(x), median(x) + sd(x), max(x))
+  names(v) <- c("ymin", "lower", "middle", "upper", "ymax")
+  v
+}
+```
+
+Read in or import your data
+```{r}
+KineDat <- read.csv("SalAmpHFSP_MergedData_004.csv")
+names(KineDat)[1] <- "TrialNames"
+
+SalAmpFilelog <- read_excel("G:/Shared drives/Active Data/SalAmp_HFSP/SalAmp_GoPro_Filelog_CD.xlsx", 
+    sheet = "PostAmpForR")
+
+# SalAmpRecalc <- read.csv("SalAmpRecalc.csv")
+
+PhaseData <- read.csv("SalAmpHFSP_PhaseData.csv")
+names(PhaseData)[3] <- "Trial"
+names(PhaseData)[1] <- "TrialNames"
+names(PhaseData)[2] <- "Indiv"
+
+phaseLong <- read.csv("PhaseLong.csv")
+```
+
+Manipulate Data (if necessary)
+```{r}
+posBreaks <- c(-10,20,40,60,80,100)
+tags <- c("20", "40", "60", "80", "100")
+KineDat$PosBins <- cut(KineDat$Position, breaks=posBreaks, labels=tags)
+
+MucoDat <- filter(KineDat, Species == 'Xmuco')
+PolyDat <- filter(KineDat, Species == 'Polyp')
+
+Sal06Dat <- filter(SalAmpFilelog, Individual == 'Bspot2018_006')
+Sal09Dat <- filter(SalAmpFilelog, Individual == 'Bspot2018_009')
+Sal10Dat <- filter(SalAmpFilelog, Individual == 'Bspot2018_010')
+
+Sal06 <- filter(KineDat, Indiv == 'Bspot2018_006')
+Sal09 <- filter(KineDat, Indiv == 'Bspot2018_009')
+Sal10 <- filter(KineDat, Indiv == 'Bspot2018_010')
+
+PhaseDataSal06 <- filter(PhaseData, Indiv == "Bspot2018_006")
+PhaseDataSal09 <- filter(PhaseData, Indiv == "Bspot2018_009")
+PhaseDataSal10 <- filter(PhaseData, Indiv == "Bspot2018_010")
+
+Sal06 <- merge(Sal06Dat, Sal06)
+Sal09 <- merge(Sal09Dat, Sal09)
+Sal10 <- merge(Sal10Dat, Sal10)
+
+Sal06 <- merge(PhaseDataSal06, Sal06)
+Sal09 <- merge(PhaseDataSal09, Sal09)
+Sal10 <- merge(PhaseDataSal10, Sal10)
+
+FishDat <- rbind(Sal06, Sal09, Sal10)
+rm(Sal06Dat,Sal09Dat,Sal10Dat,Sal06,Sal09,Sal10,
+   PhaseDataSal06,PhaseDataSal09,PhaseDataSal10)
+
+FishDat$Individual <- as.numeric(FishDat$Individual)
+salMeans <- aggregate(FishDat[c(6:17,22,23,31:33,35,38,40)], list(FishDat$TrialNames), median)
+names(salMeans)[1]="TrialNames"
+
+breaks <- c(0,0.45,0.65,1)
+tags <- c("Early","Middle", "Late")
+
+salMeans$Bins <- cut(salMeans$LimbLengthRatio, breaks=breaks, labels=tags)
+FishDat$Bins <- cut(FishDat$LimbLengthRatio, breaks=breaks, labels=tags)
+
+FishDat$Speed[FishDat$Speed == 0] <- NaN
+FishDat$Amps[FishDat$Amps == 0] <- NaN
+FishDat$Angs[FishDat$Angs == 0] <- NaN
+FishDat$Freq[FishDat$Freq == 0] <- NaN
+FishDat$AmpNorm = FishDat$Amps/max(FishDat$Amps, na.rm = TRUE)
+
+MucoDat$Bins = MucoDat$Species
+MucoDat$AmpNorm = MucoDat$Amps/max(MucoDat$Amps, na.rm = TRUE)
+
+PolyDat$Bins = PolyDat$Condition
+PolyDat$AmpNorm = PolyDat$Amps/max(PolyDat$Amps, na.rm = TRUE)
+
+AllDat <- rbind.fill(FishDat, MucoDat, PolyDat)
+
+phaseLongSal <- filter(phaseLong, Species =="Bspot")
+phaseLongSal <- merge(phaseLongSal, salMeans)
+phaseLongMuc <- filter(phaseLong, Species =="Muco")
+phaseLongMuc$Bins <- paste(phaseLongMuc$Species, phaseLongMuc$Condition)
+phaseLongPol <- filter(phaseLong, Species =="Polyp")
+phaseLongPol$Bins <- paste(phaseLongPol$Species, phaseLongPol$Condition)
+phaseLong <- rbind.fill(phaseLongSal, phaseLongMuc, phaseLongPol)
+
+rm(phaseLongSal, phaseLongMuc, phaseLongPol)
+```
+
+Sort by morphological variables
+```{r}
+salNose <- filter(FishDat, Position == "0")
+salPect <- filter(FishDat, Position == "15")
+salMidl <- filter(FishDat, Position == "35")
+salPelv <- filter(FishDat, Position == "45")
+salTail <- filter(FishDat, Position == "100")
+salNose$Location <- "1Nose"
+salPect$Location <- "2Pectoral"
+salMidl$Location <- "3Middle"
+salPelv$Location <- "4Pelvic"
+salTail$Location <- "5Tail"
+
+mucNose <- filter(MucoDat, Position == "0")
+mucPect <- filter(MucoDat, Position == "20")
+mucMdle <- filter(MucoDat, Position == "45")
+mucPelv <- filter(MucoDat, Position == "70")
+mucTail <- filter(MucoDat, Position == "100")
+mucNose$Location <- "1Nose"
+mucPect$Location <- "2Pectoral"
+mucMdle$Location <- "3Middle"
+mucPelv$Location <- "4Pelvic"
+mucTail$Location <- "5Tail"
+
+polNose <- filter(PolyDat, Position == "0")
+polPect <- filter(PolyDat, Position == "20")
+polMdle <- filter(PolyDat, Position == "45")
+polPelv <- filter(PolyDat, Position == "70")
+polTail <- filter(PolyDat, Position == "100")
+polNose$Location <- "1Nose"
+polPect$Location <- "2Pectoral"
+polMdle$Location <- "3Middle"
+polPelv$Location <- "4Pelvic"
+polTail$Location <- "5Tail"
+
+morphSort <- rbind.fill(salNose, salPect, salMidl, salPelv, salTail, 
+                        # mucNose, mucPect, mucMdle, mucPelv, mucTail,
+                        polNose, polPect, polMdle, polPelv, polTail)
+
+rm(salNose, salPect, salMidl, salPelv, salTail, 
+   mucNose, mucPect, mucMdle, mucPelv, mucTail,
+   polNose, polPect, polMdle, polPelv, polTail)
+```
+
+Salamander Statistics (overall)
+Do their kinematics change over time?
+```{r}
+# Data with changing values along the body (Individual and Trial as random effects)
+freqModel <- lmer(Freq ~ LimbLengthRatio*DaysPostAmp+Position+(1|Indiv)+(1|Trial), 
+                  FishDat, na.action = na.omit)
+  Anova(freqModel)
+
+ampModel <- lmer(Amps ~ LimbLengthRatio*DaysPostAmp+Position+(1|Indiv)+(1|Trial), 
+                na.action = na.omit, FishDat)
+  Anova(ampModel)
+
+# Data with one value per trial (Individual as a random effect)
+speedModel <- lmer(Speed ~ LimbLengthRatio+(1|Indiv)+(1|Trial), FishDat)
+  Anova(speedModel)
+
+strideModel <- lmer(SL ~ LimbLengthRatio+Speed+(1|Indiv)+(1|Trial), FishDat)
+  Anova(strideModel)
+
+pectModel <- lmer(Slope ~ Position*Speed+Bins+(1|Indiv)+(1|DaysPostAmp), phaseLong)
+  summary(pectModel)
+# pelvModel <- lm(pelvSlope ~ Speed+Bins, salMeans)
+#   Anova(pelvModel)
+# tailModel <- lm(tailSlope ~ Speed+Bins, salMeans)
+#   Anova(tailModel)
+# noseModel <- lm(noseSlope ~ Speed+Bins, salMeans)
+#   Anova(noseModel)
+  
+# ggplot(data = salMeans, aes(x = Bins, y = Speed))+
+#   geom_boxplot()
+```
+
+Differences by position
+```{r}
+noseData = filter(morphSort, Location == '1Nose')
+noseModel <- lme(AmpsMax ~ LimbLengthRatio+Speed,random=~1|Indiv, 
+                 data = noseData,na.action = na.omit)
+  Anova(noseModel)
+
+pelvData = filter(morphSort, Location == '4Pelvic')
+pelvModel <- lme(AmpsMax ~ LimbLengthRatio+Speed,random=~1|Indiv, 
+                 data = pelvData, na.action = na.omit)
+  Anova(pelvModel)
+  
+pectData = filter(morphSort, Location == '2Pectoral')
+pectModel <- lme(AmpsMax ~ LimbLengthRatio+Speed,random=~1|Indiv, 
+                 data = pectData, na.action = na.omit)
+  Anova(pectModel)
+  
+tailData = filter(morphSort, Location == '5Tail')
+tailModel <- lme(AmpsMax ~ LimbLengthRatio+Speed,random=~1|Indiv, 
+                 data = tailData, na.action = na.omit)
+  Anova(tailModel)
+  
+# earlyData <- filter(phaseLong, Bins == "Early")
+# midData <- filter(phaseLong, Bins == "Middle")
+# lateData <- filter(phaseLong, Bins == "Late")
+# muco <- filter(phaseLong, Bins == "Muco Swimming")
+# polypSwim <- filter(phaseLong, Bins == "Polyp Swimming")
+# polypWalk <- filter(phaseLong, Bins == "Polyp Walking")
+# 
+# Early <- lm(1/Slope ~ Position+Int+Speed, data = earlyData)
+#   Anova(Early)
+# Middle <- lmer(1/Slope ~ Position+Speed+(1|Indiv), data = midData)
+#   Anova(Middle)
+# Late <- lm(1/Slope ~ Position+Speed, data = lateData)
+#   Anova(Late)
+# Muco <-lmer(1/Slope ~ Position+(1|Trial), data = muco)
+#   Anova(Muco)
+# PolyS <-lmer(1/Slope ~ Position+(1|Indiv), data = polypSwim)
+#   Anova(PolyS)
+# PolyW <-lm(1/Slope ~ Position, data = polypWalk)
+#   Anova(PolyW)
+```
+
+Plotting (PCA) (just for fun)
+```{r}
+library(ggfortify)
+library("FactoMineR")
+library("factoextra")
+library(cluster)
+library(lfda)
+library(ggpubr)
+
+df <- AllDat[,c(34,27,28,30,32)]
+df <- na.omit(df)
+res.pca <- prcomp(df[2:5], scale = TRUE)
+
+fviz_pca_biplot(res.pca, 
+                geom.ind = "point",
+                pointshape = 21,
+                pointsize = 2.5,
+                fill.ind = df$Bins,
+                col.ind = "black",addEllipses=TRUE,
+                legend.title = list(fill = "Size", color = "Clusters"),
+                repel = TRUE)
+```
+
+Salamander Kinematics Plots
+```{r}
+Colors <- c('deepskyblue', 'dodgerblue2', 'royalblue4','darkgreen','darkorange','orange')
+ss1<- 
+  # ggplot(data = FishDat, aes(x = Bins, y = Freq))+
+  # geom_boxplot(aes(fill = Bins))+
+  ggplot(FishDat, aes(x = Bins, y = Freq,fill = Bins)) +
+  stat_summary(fun.data=MinMeanSEMMax, geom="boxplot")+
+  theme_classic()+
+  labs(fill = "Regeneration Time", x = "Regeneration Time", y = "Frequency (Hz)")+
+  scale_fill_manual(values = Colors)+
+  theme(axis.text = element_text(size = 14),
+        axis.title = element_text(size = 20),
+        axis.line = element_line(size = 2),
+        axis.ticks = element_line(size = 2),
+        legend.text = element_text(size = 14),
+        legend.title = element_text(size = 20),
+        legend.position = 'top',
+        axis.title.x = element_blank())
+  
+
+ss2 <- 
+  # ggplot(data = FishDat, aes(x = Bins, y = SL))+
+  # geom_boxplot(aes(fill = Bins))+
+  ggplot(FishDat, aes(x = Bins, y = SL ,fill = Bins)) +
+  stat_summary(fun.data=MinMeanSEMMax, geom="boxplot")+
+  theme_classic()+
+  labs(fill = "Regeneration Time", x = "Regeneration Time", y = "Stride Length (BL)")+
+  scale_fill_manual(values = Colors)+
+  theme(axis.text = element_text(size = 14),
+        axis.title = element_text(size = 20),
+        axis.line = element_line(size = 2),
+        axis.ticks = element_line(size = 2),
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        legend.position = "none")
+
+ss3 <- ggplot(data = FishDat, aes(x = Speed, y = Freq, color = Bins))+
+  geom_point()+
+  geom_smooth(method = "lm", se = FALSE)+
+  theme_classic()+
+  labs(color = "Regeneration Time", x = "Speed (BL/s)", y = "Frequency (Hz)")+
+  scale_color_manual(values = Colors)+
+  theme(axis.text = element_text(size = 14),
+        axis.title = element_text(size = 20),
+        axis.line = element_line(size = 2),
+        axis.ticks = element_line(size = 2),
+        legend.text = element_text(size = 14),
+        legend.title = element_text(size = 20),
+        legend.position = 'top',
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank())
+
+ss4<- ggplot(data = FishDat, aes(x = Speed, y = SL, color = Bins))+
+  geom_point(size = 2)+
+  geom_smooth(method = "lm", se = FALSE, size = 2)+
+  theme_classic()+
+  labs(color = "Regeneration Time", x = "Speed (BL/s)", y = "Stride Length (BL)")+
+  scale_color_manual(values = Colors)+
+  theme(axis.text = element_text(size = 14),
+        axis.title = element_text(size = 20),
+        axis.line = element_line(size = 2),
+        axis.ticks = element_line(size = 2),
+        axis.title.y = element_blank(),
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        legend.position = "none")
+
+plot_grid(ss1, ss3, ss2, ss4, labels = "AUTO")
+
+ggplot(data = FishDat, aes(x = DaysPostAmp, y = LimbLengthRatio))+
+  geom_point(aes(color = as.factor(Indiv)),size = 2)+
+  geom_smooth(method = "lm", se = FALSE, size = 2, color = 'black')+
+  theme_classic()+
+  labs(color = "Individual", x = "Days Post Amputation", y = "Limb Length Ratio")+
+  scale_color_manual(values = posColors)+
+  theme(axis.text = element_text(size = 14),
+        axis.title = element_text(size = 20),
+        axis.line = element_line(size = 2),
+        axis.ticks = element_line(size = 2),
+        legend.title = element_text(size = 20),
+        legend.text = element_text(size = 14),
+        legend.position = "right")
+
+  ggplot(FishDat, aes(x = Bins, y = NumPeaks*Speed/length.mm ,fill = Bins)) +
+  stat_summary(fun.data=MinMeanSEMMax, geom="boxplot")+
+  theme_classic()+
+  labs(fill = "Regeneration Time", x = "Regeneration Time", y = "Wave Number")+
+  scale_fill_manual(values = Colors)+
+  theme(axis.text = element_text(size = 14),
+        axis.title = element_text(size = 20),
+        axis.line = element_line(size = 2),
+        axis.ticks = element_line(size = 2),
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        legend.position = "none")
+  
+  ggplot(FishDat)+
+    geom_point(aes(x = LimbLengthRatio, y = NumPeaks, color = Bins))+
+    geom_smooth(aes(x = LimbLengthRatio, y = NumPeaks), method = "lm", 
+                formula = y ~ x + I(x^2), se = FALSE)+
+    labs(x = "Regeneration Time", y = "Wave Number")+
+    scale_fill_manual(values = Colors)+
+    theme_classic()+
+    theme(axis.text = element_text(size = 14),
+          axis.title = element_text(size = 20),
+          axis.line = element_line(size = 2),
+          axis.ticks = element_line(size = 2),
+          legend.title = element_blank(),
+          legend.text = element_blank(),
+          legend.position = "none")
+```
+
+PhasePlots
+```{r}
+p1<-
+  # ggplot(data = salMeans, aes(x=Bins, y = pelvSlope, fill=Bins))+
+  # geom_boxplot()+
+  ggplot(salMeans, aes(x = Bins, y = pelvSlope ,fill = Bins)) +
+  stat_summary(fun.data=MinMeanSEMMax, geom="boxplot")+
+  theme_classic()+
+  scale_fill_manual(values = Colors)+
+  labs(x = "RegenerationTime", y = "Pelvic Frequency Slope")+
+  theme(axis.text = element_text(size = 14),
+        axis.title = element_text(size = 20),
+        axis.line = element_line(size = 2),
+        axis.ticks = element_line(size = 2),
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        legend.position = "none")
+
+p2<-
+  ggplot(salMeans, aes(x = Bins, y = noseSlope ,fill = Bins)) +
+  stat_summary(fun.data=MinMeanSEMMax, geom="boxplot")+
+  # ggplot(data = salMeans, aes(x=Bins, y = noseSlope, fill=Bins))+
+  # geom_boxplot()+
+  theme_classic()+
+  scale_fill_manual(values = Colors)+
+  labs(x = "RegenerationTime", y = "Nose Frequency Slope")+
+  theme(axis.text = element_text(size = 14),
+        axis.title = element_text(size = 20),
+        axis.line = element_line(size = 2),
+        axis.ticks = element_line(size = 2),
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        legend.position = "none")
+
+plot_grid(p1, p2, labels = "AUTO")
+
+phaseLong <- arrange(phaseLong, Bins, Position)
+ggplot(data = phaseLong, aes(x = Bins, y = 1/Slope, fill = Position))+
+  geom_boxplot()+
+  theme_classic()+
+  ylim(0,20)+
+  scale_fill_manual(values = posColors)+
+  labs(x = "Condition", y = "Frequency Slope")+
+  theme(axis.text = element_text(size = 14),
+        axis.title = element_text(size = 20),
+        axis.line = element_line(size = 2),
+        axis.ticks = element_line(size = 2),
+        legend.position = "top")
+
+```
+
+Kinematics at different points along the body
+```{r}
+posColors <- c('gray90','gray70','gray50','gray30', 'gray1')
+ggplot(data = morphSort, aes(x = Bins, y = Freq))+
+  geom_boxplot(aes(fill = Location), size = 1)+
+  theme_classic()+
+  labs(color = "Position", x = "Condition", y = "Frequency (Hz)")+
+  scale_fill_manual(values = posColors)+
+  theme(axis.text = element_text(size = 14),
+        axis.title = element_text(size = 20),
+        axis.line = element_line(size = 2),
+        axis.ticks = element_line(size = 2),
+        legend.text = element_text(size = 14),
+        legend.title = element_text(size = 20),
+        legend.position = 'top')
+
+ggplot(data = morphSort, aes(x = Bins, y = log10(AmpsMax)))+
+  geom_boxplot(aes(fill = Location), size = 1)+
+  theme_classic()+
+  labs(color = "Position", x = "Condition", y = "Amplitude (BL)")+
+  scale_fill_manual(values = posColors)+
+  theme(axis.text = element_text(size = 14),
+        axis.title = element_text(size = 20),
+        axis.line = element_line(size = 2),
+        axis.ticks = element_line(size = 2),
+        legend.text = element_text(size = 14),
+        legend.title = element_text(size = 20),
+        legend.position = 'top')
+
+salMorph <- filter(morphSort, Species == "Bspot")
+ggplot(data = salMorph, aes(x = Location, y = Freq*Speed))+
+  geom_boxplot(aes(fill = Bins), size = 1)+
+  theme_classic()+
+  labs(color = "Position", x = "Condition", y = "Frequency (Hz)")+
+  scale_fill_manual(values = posColors)+
+  theme(axis.text = element_text(size = 14),
+        axis.title = element_text(size = 20),
+        axis.line = element_line(size = 2),
+        axis.ticks = element_line(size = 2),
+        legend.text = element_text(size = 14),
+        legend.title = element_text(size = 20),
+        legend.position = 'top')
+
+ggplot(data = AllDat, aes(x = Position, y = log10(AmpsMax), color = Bins))+
+  geom_point(size = 1)+
+  geom_smooth(se = FALSE)+
+  theme_classic()+
+  labs(color = "Position", x = "Condition", y = "Amplitude (BL)")+
+  theme(axis.text = element_text(size = 14),
+        axis.title = element_text(size = 20),
+        axis.line = element_line(size = 2),
+        axis.ticks = element_line(size = 2),
+        legend.text = element_text(size = 14),
+        legend.title = element_text(size = 20),
+        legend.position = 'top')
+```
+
+Comparing Salamander with other critters
+```{r}
+# ggplot(data = morphSort, aes(x = Bins, y = Freq))+
+#   geom_boxplot(aes(fill = as.factor(Location)))+
+#   theme_classic()+
+#   labs(fill = "Position", x = "Condition", y = "Frequency (Hz)")+
+#   scale_fill_manual(values = posColors)+
+#   theme(axis.text = element_text(size = 14),
+#         axis.title = element_text(size = 20),
+#         axis.line = element_line(size = 2),
+#         axis.ticks = element_line(size = 2),
+#         legend.text = element_text(size = 14),
+#         legend.title = element_text(size = 20),
+#         legend.position = 'top')
+# 
+# ggplot()+
+#   geom_boxplot(data = morphSort, aes(x = Bins, y = log(Amps), fill = as.factor(Location)))+
+#   labs(color = "Condition", x = "Position (%BL)")+
+#   theme_classic()+
+#   labs(fill = "Position", x = "Condition", y = "Amplitudes (BL)")+
+#   scale_fill_manual(values = posColors)+
+#   theme(axis.text = element_text(size = 14),
+#         axis.title = element_text(size = 20),
+#         axis.line = element_line(size = 2),
+#         axis.ticks = element_line(size = 2),
+#         legend.text = element_text(size = 14),
+#         legend.title = element_text(size = 20),
+#         legend.position = 'top')
+
+ggplot(morphSort, aes(x = Bins, y = SL, fill=Bins)) +
+  stat_summary(fun.data=MinMeanSEMMax, geom="boxplot")+
+  labs(y = "Stride Length (BL)", x = "Position (%BL)")+
+  theme_classic()+
+  scale_fill_manual(values = Colors)+
+  theme(axis.text = element_text(size = 14),
+        axis.title = element_text(size = 20),
+        axis.line = element_line(size = 2),
+        axis.ticks = element_line(size = 2),
+        legend.text = element_text(size = 14),
+        legend.title = element_text(size = 20),
+        legend.position = 'top')
+
+# ggplot(data = morphSort, aes(x = Bins, y = SL, fill = Bins))+
+#   geom_boxplot(size = 1)+
+#   labs(y = "Stride Length (BL)", x = "Position (%BL)")+
+#   theme_classic()+
+#   scale_fill_manual(values = Colors)+
+#   theme(axis.text = element_text(size = 14),
+#         axis.title = element_text(size = 20),
+#         axis.line = element_line(size = 2),
+#         axis.ticks = element_line(size = 2),
+#         legend.text = element_text(size = 14),
+#         legend.title = element_text(size = 20),
+#         legend.position = 'top')
+```
+
+```{r}
+ggplot(data = FishDat, aes(x = Position, y = Freq))+
+  # geom_point(aes(color = Bins))+
+  theme_classic()+
+  geom_smooth(aes(color = Bins))
+
+ggplot(data = FishDat, aes(x = Position, y = log10(AmpsMax)))+
+  # geom_point(aes(color = Bins))+
+  theme_classic()+
+  geom_smooth(aes(color = Bins))
+
+ggplot(data = phaseLong, aes(x = Bins, y = Slope, fill = Position))+
+  geom_boxplot()+
+  ylim(0, 0.45)+
+  theme_classic()
+
+ggplot(data = phaseLong, aes(x = Bins, y = Int, fill = Position))+
+  geom_boxplot()+
+  theme_classic()
+```
+
+
+
+
+
+
+
